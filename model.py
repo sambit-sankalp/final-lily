@@ -4,8 +4,12 @@ from sklearn.ensemble import RandomForestRegressor
 from sklearn.preprocessing import StandardScaler
 from sklearn.metrics import mean_squared_error, r2_score
 from sklearn.pipeline import Pipeline
+from sklearn.compose import ColumnTransformer
 import sys
 import json
+from tabulate import tabulate
+from colorama import Fore, Style
+import pandas as pd
 
 # Load the data
 def train_model():
@@ -20,10 +24,15 @@ def train_model():
     y = data[target]
     X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
 
+    preprocessor = ColumnTransformer(
+        transformers=[
+            ('num', StandardScaler(), features)  # Use the features you want to scale
+        ])
+
     # Create a pipeline with standardization and the model
     pipeline = Pipeline([
-        ('scaler', StandardScaler()),  # Standardization
-        ('rf', RandomForestRegressor(random_state=42))  # Random Forest Regressor
+        ('preprocessor', preprocessor),
+        ('rf', RandomForestRegressor(random_state=42))
     ])
 
     # Hyperparameter tuning
@@ -42,8 +51,21 @@ def train_model():
     y_pred = best_model.predict(X_test)
     mse = mean_squared_error(y_test, y_pred)
     r2 = r2_score(y_test, y_pred)
-    print(f"Mean Squared Error: {mse}")
-    print(f"R² Score: {r2}")
+    # print(f"Mean Squared Error: {mse}")
+    # print(f"R² Score: {r2}")
+    table_data = [
+        ["Metric", "Value"],
+        ["Mean Squared Error", mse],
+        ["R² Score", r2]
+    ]
+
+    colored_table = [
+        [Fore.CYAN + Style.BRIGHT + cell if i == 0 else str(cell) for i, cell in enumerate(row)] for row in table_data
+    ]
+
+    print(Fore.YELLOW + "Model Performance" + Style.RESET_ALL)
+    print(tabulate(colored_table, headers="firstrow", tablefmt="fancy_grid"))
+    print(Style.RESET_ALL)
 
     return best_model
 
@@ -52,13 +74,15 @@ def calculate_collateral(reputation_score, loan_amount):
         loan_amount = float(loan_amount)
     except ValueError:
         print("Could not convert to a number.")
-    # Assuming a base collateral rate
-    base_collateral_rate = 0.5  # 50% of the loan amount
-
+    
+    # Calculate the minimum collateral percentage based on loan amount
+    min_collateral_percentage = 0.2  # 10% of the loan amount
+    
     # Adjusting the collateral based on reputation
     # Higher reputation score leads to lower collateral requirement
-    collateral_factor = 10 - (reputation_score / 100)
-    collateral_required = loan_amount * base_collateral_rate * collateral_factor
+     # Reputation score is between 0 to 1000
+    collateral_factor = 1 - (reputation_score / 1000)
+    collateral_required = max(loan_amount * min_collateral_percentage, loan_amount * collateral_factor)
 
     return collateral_required
 
@@ -69,17 +93,31 @@ def main(input):
         # Parse the JSON string
         new_miner = json.loads(input)
 
-        # Now json_data is a Python dictionary
-        print("Parsed JSON:", new_miner)
-
         # Example of accessing a value (replace 'key' with an actual key from your JSON)
         # value = json_data['key']
         # print("Value for key 'key':", value)
 
-        predicted_score = model.predict([ [new_miner['AdjustedPower'], new_miner['WinCount'], new_miner['SectorTotal'], new_miner['SectorActive'], new_miner['SectorFaults'], new_miner['SectorRecoveries']] ])
-        print(f"Predicted Reputation Score: {predicted_score[0]}")
+        features = ['AdjustedPower', 'WinCount', 'SectorTotal', 'SectorActive', 'SectorFaults', 'SectorRecoveries']
 
-        print(f"Collateral Required: {calculate_collateral(predicted_score[0], new_miner['LoanAmount'])}")
+        new_miner_data = [[new_miner['AdjustedPower'], new_miner['WinCount'], new_miner['SectorTotal'],
+                   new_miner['SectorActive'], new_miner['SectorFaults'], new_miner['SectorRecoveries']]]
+
+        # Convert the input data to a Pandas DataFrame
+        new_miner_df = pd.DataFrame(new_miner_data, columns=features)
+
+        predicted_score = model.predict(new_miner_df)
+        table_data = [("Parameter", "Value"),
+                ("Address", new_miner['Address']),
+              ("Reputation Score", predicted_score[0]),
+              ("Collateral Required", calculate_collateral(predicted_score[0], 1000))]
+
+        # Display the table with colors
+        colored_table = [
+            [Fore.CYAN + Style.BRIGHT + str(cell) + Style.RESET_ALL for cell in row] for row in table_data
+        ]
+
+        print(Fore.YELLOW + "Our Model Prediction" + Style.RESET_ALL)
+        print(tabulate(colored_table, tablefmt="fancy_grid"))
     except json.JSONDecodeError as e:
         print("Invalid JSON string:", e)
         sys.exit(1)
